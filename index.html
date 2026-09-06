@@ -17,6 +17,11 @@
     overflow: hidden;
   }
   button { font-family: inherit; }
+  /* Animate only the body-color fill on swatch/arrow changes (snappy ease-in-out). */
+  .body-fill { transition: fill 280ms cubic-bezier(0.65, 0, 0.35, 1); }
+  @media (prefers-reduced-motion: reduce) {
+    .body-fill { transition: none; }
+  }
 </style>
 
 <div id="root"></div>
@@ -103,16 +108,16 @@ function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, style }) 
       </defs>
 
       {/* head / ears */}
-      <g transform="translate(-119.8755, 0)"><path d={HEAD_D} fill={bodyColor} /></g>
+      <g transform="translate(-119.8755, 0)"><path className="body-fill" d={HEAD_D} fill={bodyColor} /></g>
 
       {/* arms (behind the torso) */}
       <g transform="translate(-353.8755, 394)">
-        <path d={ARM_L_D} fill={bodyColor} />
-        <path d={ARM_R_D} fill={bodyColor} />
+        <path className="body-fill" d={ARM_L_D} fill={bodyColor} />
+        <path className="body-fill" d={ARM_R_D} fill={bodyColor} />
       </g>
 
       {/* torso */}
-      <g transform="translate(-167.523, 383.997)"><path d={TORSO_D} fill={bodyColor} /></g>
+      <g transform="translate(-167.523, 383.997)"><path className="body-fill" d={TORSO_D} fill={bodyColor} /></g>
 
       {/* ground shadow */}
       <ellipse cx="0" cy="1081.937" rx="203" ry="25.5" fill={C.shadow} filter="url(#shadowBlur)" />
@@ -120,7 +125,7 @@ function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, style }) 
       {/* legs + socks + shoes */}
       {feet.map((l, i) => (
         <g key={i}>
-          <rect x={l.legX} y="738.927" width="54.641" height="278.956" rx="19.172" fill={bodyColor} />
+          <rect className="body-fill" x={l.legX} y="738.927" width="54.641" height="278.956" rx="19.172" fill={bodyColor} />
           <rect x={l.sockX} y="935.377" width="54.641" height="82.508" fill={C.sock} />
           <rect x={l.shoeX} y="992.887" width="153.183" height="101.545" rx="38.344" fill={C.shoe} />
         </g>
