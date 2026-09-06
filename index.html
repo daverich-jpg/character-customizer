@@ -1,0 +1,273 @@
+<title>Character Customizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&display=swap">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; margin: 0; }
+  body {
+    font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+    background: #ecf4ff;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  button { font-family: inherit; }
+</style>
+
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState } = React;
+
+/* The Figma frame (node 671:2181) is a fixed 1728px-wide canvas.
+   Everything is sized/positioned in vw relative to that canvas, so the
+   whole scene scales uniformly with the viewport width — exact Figma
+   proportions at any size, with no fixed-px/percentage collisions. */
+const K = 100 / 1728;
+const vw = (px) => `${(px * K).toFixed(3)}vw`;
+
+/* ---------- Exact tokens from Figma ---------- */
+const C = {
+  bg: "#ecf4ff",
+  ground: "#ffffff",
+  body: "#9ec6fd",       // body / ears / arms / legs (recolorable)
+  eyelid: "#5f7798",      // eyelids + inner mouth ring (recolorable)
+  sock: "#d1e1f7",
+  shoe: "#3e4756",
+  eyeWhite: "#f5f9ff",
+  pupil: "#00040a",
+  lipRing: "#999b9d",
+  mouthFill: "#00040a",
+  shadow: "#cccdce",
+  navActive: "#190f13",
+  navActiveText: "#fafafa",
+  navText: "#190f13",
+  arrowShadow: "#afbac9",
+};
+
+const MOUTH_D = "M15.854 16.5056C33.9658 2.47975 68.81 16.0756 84.1988 23.247C89.0153 25.4916 94.6271 25.4699 99.4084 23.1516C116.839 14.7 159.632 -3.03633 177.62 16.5056C205.707 47.0203 137.369 84.7509 95.8981 84.3274C54.9289 83.909 -16.5396 41.5914 15.854 16.5056Z";
+const UNION_D = "M64.6182 4.21458C72.6543 0.375003 81.6822 -0.883058 90.4619 0.613015L93.0479 1.05442C113.592 4.55542 128.697 22.2435 128.937 43.0827L129.602 101.019C129.714 110.741 138.557 117.97 148.279 117.97H165.356C175.493 117.97 184.761 110.46 184.878 100.324L185.537 43.0837C185.777 22.2447 200.881 4.55643 221.425 1.0554L224.012 0.614968C232.791 -0.881032 241.819 0.376876 249.855 4.21653L252.566 5.51243C271.217 14.4238 280.925 35.3131 275.712 55.3152L252.533 144.244C250.133 153.454 252.392 163.122 257.097 171.395C267.448 189.595 272.515 211.095 270.302 233.696L257.571 363.683C256.639 373.201 260.315 382.509 266.774 389.563C297.303 422.905 315.384 466.003 315.384 500.669C315.384 567.225 248.739 621.18 155.295 621.18C61.8513 621.18 0 567.225 0 500.669C0.000110595 465.758 17.0182 422.298 46.6853 388.86C52.9121 381.842 56.4705 372.711 55.5878 363.371L43.2998 233.339C41.1475 210.563 46.3811 188.924 56.9542 170.671C61.7766 162.346 64.1106 152.575 61.6841 143.265L38.7607 55.3132C33.5475 35.3112 43.2557 14.4219 61.9062 5.51048L64.6182 4.21458Z";
+const GROUND_D = "M1179 0C875 0 369.667 85.3333 155 128L0 473.5L675 682.5L2373.5 473.5C2387.67 375.167 2386.5 168.4 2268.5 128C2121 77.5 1559 0 1179 0Z";
+
+/* =========================================================
+   <Eye /> — the ONE eye graphic (SVG <g>), reused by mascot + swatches.
+   Ratios lifted from Figma so it is exact at any radius.
+   ========================================================= */
+let __eyeUid = 0;
+function Eye({ cx, cy, r, eyelidColor }) {
+  const uid = React.useMemo(() => `eye${__eyeUid++}`, []);
+  const lidH = r * 1.0176;
+  const pr = r * 0.342;
+  const hlR = r * 0.1053;
+  const pcy = cy + r * 0.08;
+  return (
+    <g>
+      <clipPath id={uid}><circle cx={cx} cy={cy} r={r} /></clipPath>
+      <circle cx={cx} cy={cy} r={r} fill={C.eyeWhite} />
+      <g clipPath={`url(#${uid})`}>
+        <circle cx={cx} cy={pcy} r={pr} fill={C.pupil} />
+        <circle cx={cx + hlR * 0.9} cy={pcy - hlR * 0.27} r={hlR} fill="#ffffff" />
+        <rect x={cx - r} y={cy - r} width={r * 2} height={lidH} fill={eyelidColor} />
+      </g>
+    </g>
+  );
+}
+
+/* =========================================================
+   <CharacterMascot /> — full creature as one SVG (viewBox 420.534 x 925).
+   ========================================================= */
+function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, style }) {
+  const feet = [
+    { legX: 239.1, shoeX: 239.1 },   // right foot (toe →)
+    { legX: 123.13, shoeX: 24.57 },  // left foot  (toe ←)
+  ];
+  return (
+    <svg viewBox="0 0 420.534 925" style={style} xmlns="http://www.w3.org/2000/svg"
+         role="img" aria-label="Character preview">
+      <defs>
+        <filter id="shadowBlur" x="-20%" y="-60%" width="140%" height="220%">
+          <feGaussianBlur stdDeviation="5" />
+        </filter>
+      </defs>
+
+      <ellipse cx="210.27" cy="899.5" rx="203" ry="25.5" fill={C.shadow} filter="url(#shadowBlur)" />
+
+      {feet.map((l, i) => (
+        <g key={i}>
+          <rect x={l.legX} y="544.49" width="54.641" height="278.956" rx="19.172" fill={bodyColor} />
+          <rect x={l.legX} y="740.94" width="54.641" height="82.508" fill={C.sock} />
+          <rect x={l.shoeX} y="798.45" width="153.183" height="101.545" rx="38.344" fill={C.shoe} />
+        </g>
+      ))}
+
+      <g transform="translate(52.19, 0)"><path d={UNION_D} fill={bodyColor} /></g>
+
+      <g transform="translate(352.757, 518.022) rotate(-15.43)">
+        <rect x="-26.128" y="-160.019" width="52.256" height="320.037" rx="26.128" fill={bodyColor} />
+      </g>
+      <g transform="translate(67.757, 518.022) rotate(15.43)">
+        <rect x="-26.128" y="-160.019" width="52.256" height="320.037" rx="26.128" fill={bodyColor} />
+      </g>
+
+      <Eye cx={153.62} cy={199.87} r={27.32} eyelidColor={eyelidColor} />
+      <Eye cx={265.78} cy={199.87} r={27.32} eyelidColor={eyelidColor} />
+
+      <g transform="translate(113.78, 219.52)">
+        <path d={MOUTH_D} fill={C.mouthFill} stroke={C.lipRing} strokeWidth="15.3378" />
+      </g>
+      <rect x="168.41" y="238.21" width="27.8" height="23.965" rx="2.876" fill={C.eyeWhite} />
+      <rect x="215.40" y="238.21" width="27.8" height="23.965" rx="2.876" fill={C.eyeWhite} />
+      <g transform="translate(113.78, 219.52)">
+        <path d={MOUTH_D} fill="none" stroke={eyelidColor} strokeWidth="15.3378" />
+      </g>
+    </svg>
+  );
+}
+
+/* =========================================================
+   <SceneBackground /> — pale-blue field + curved white ground.
+   ========================================================= */
+function SceneBackground() {
+  return (
+    <div className="absolute inset-0" style={{ background: C.bg }}>
+      <svg viewBox="0 0 2379.66 682.5" preserveAspectRatio="none" aria-hidden="true"
+           style={{ position: "absolute", left: vw(-415), width: vw(2379.66), top: vw(783), height: vw(682.5) }}>
+        <path d={GROUND_D} fill={C.ground} />
+      </svg>
+    </div>
+  );
+}
+
+/* =========================================================
+   <SidebarNav /> — vertical white pill; active tab is its own dark pill.
+   ========================================================= */
+function SidebarNav({ activeTab = "Shape", items = ["Shape", "Body", "Face", "Style"], onSelect = () => {} }) {
+  return (
+    <nav className="absolute z-30" style={{ top: vw(80), left: vw(80) }}>
+      <div className="bg-white flex items-center justify-center overflow-hidden"
+           style={{ width: vw(97), height: vw(350), padding: vw(12), borderRadius: vw(32) }}>
+        <div className="flex flex-col items-center justify-between h-full" style={{ width: vw(72.5) }}>
+          {items.map((label) => {
+            const active = label === activeTab;
+            return (
+              <button key={label} onClick={() => onSelect(label)}
+                className="w-full flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                style={{
+                  height: vw(40), borderRadius: vw(20), padding: vw(16),
+                  fontSize: `clamp(11px, ${vw(16)}, 18px)`, fontWeight: 500, lineHeight: "normal",
+                  background: active ? C.navActive : "transparent",
+                  color: active ? C.navActiveText : C.navText,
+                  boxShadow: active ? "0 2px 3px rgba(0,0,0,0.25)" : "none",
+                  cursor: "pointer", whiteSpace: "nowrap",
+                }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+/* ---------- Arrow button (white rounded square, chevron from Figma) ---------- */
+function ArrowButton({ dir = "left", onClick }) {
+  return (
+    <button onClick={onClick} aria-label={dir === "left" ? "Previous" : "Next"}
+      className="shrink-0 bg-white flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      style={{ width: vw(40), height: vw(40), borderRadius: vw(20),
+               boxShadow: `0 ${vw(2)} ${vw(8)} 0 ${C.arrowShadow}`, cursor: "pointer" }}>
+      <svg width="60%" height="60%" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+           style={{ transform: dir === "right" ? "rotate(180deg)" : "none" }}>
+        <path d="M15 6C15 6 9.00001 10.4189 9 12C8.99999 13.5812 15 18 15 18"
+              stroke="#000000" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
+/* ---------- Single swatch (140px circle with the shared Eye pair) ---------- */
+function Swatch({ circleColor, eyelidColor, onSelect, selected }) {
+  return (
+    <button onClick={onSelect}
+      className="shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      style={{
+        width: vw(140), height: vw(140), borderRadius: "9999px", padding: 0, border: "none",
+        background: "transparent", cursor: "pointer",
+        boxShadow: selected ? `0 0 0 ${vw(4)} ${C.navActive}` : "none",
+      }}>
+      <svg viewBox="0 0 140 140" className="w-full h-full block" aria-hidden="true">
+        <circle cx="70" cy="70" r="70" fill={circleColor} />
+        <Eye cx={35} cy={66} r={20} eyelidColor={eyelidColor} />
+        <Eye cx={104.28} cy={66} r={20} eyelidColor={eyelidColor} />
+      </svg>
+    </button>
+  );
+}
+
+/* =========================================================
+   <SwatchCarousel /> — arrows at row ends, 4 swatches split around character.
+   ========================================================= */
+function SwatchCarousel({ swatches, selectedIndex, onSelect, onPrev, onNext }) {
+  const left = swatches.slice(0, 2);
+  const right = swatches.slice(2, 4);
+  const gap = vw(40);
+  return (
+    <div className="absolute z-20 left-1/2 flex items-center justify-between"
+         style={{ top: vw(559), transform: "translate(-50%, -50%)", width: vw(1308) }}>
+      <div className="flex items-center" style={{ gap }}>
+        <ArrowButton dir="left" onClick={onPrev} />
+        {left.map((s, i) => (
+          <Swatch key={i} {...s} selected={selectedIndex === i} onSelect={() => onSelect(i)} />
+        ))}
+      </div>
+      <div className="flex items-center" style={{ gap }}>
+        {right.map((s, i) => (
+          <Swatch key={i + 2} {...s} selected={selectedIndex === i + 2} onSelect={() => onSelect(i + 2)} />
+        ))}
+        <ArrowButton dir="right" onClick={onNext} />
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   App
+   ========================================================= */
+const SWATCHES = [
+  { circleColor: "#9ec6fd", eyelidColor: "#5f7798" }, // cornflower blue
+  { circleColor: "#a2acbd", eyelidColor: "#616771" }, // gray
+  { circleColor: "#a98958", eyelidColor: "#655235" }, // brown
+  { circleColor: "#e2be8a", eyelidColor: "#887253" }, // tan
+];
+
+function App() {
+  const [selected, setSelected] = useState(0);
+  const cur = SWATCHES[selected];
+  const prev = () => setSelected((i) => (i - 1 + SWATCHES.length) % SWATCHES.length);
+  const next = () => setSelected((i) => (i + 1) % SWATCHES.length);
+
+  return (
+    <div className="relative w-full h-full overflow-hidden">
+      <SceneBackground />
+      <SidebarNav activeTab="Shape" onSelect={() => {}} />
+
+      <div className="absolute z-10 left-1/2"
+           style={{ top: vw(96), transform: "translateX(-50%)", height: vw(925) }}>
+        <CharacterMascot bodyColor={cur.circleColor} eyelidColor={cur.eyelidColor}
+                         style={{ height: "100%", width: "auto", display: "block" }} />
+      </div>
+
+      <SwatchCarousel swatches={SWATCHES} selectedIndex={selected}
+                      onSelect={setSelected} onPrev={prev} onNext={next} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
