@@ -1,4 +1,5 @@
 <title>Character Customizer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&display=swap">
@@ -7,7 +8,20 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"></script>
 <style>
-  :root { color-scheme: light; }
+  :root {
+    color-scheme: light;
+    /* Mobile-first control sizes (min 44px touch targets). Desktop overrides below. */
+    --swatch: clamp(3.5rem, 15vw, 5.25rem);   /* ~56–84px */
+    --arrow: 2.75rem;                          /* 44px */
+    --ring: 3px;
+  }
+  @media (min-width: 1024px) {
+    :root {
+      --swatch: 8.102vw;   /* = the old vw(140) */
+      --arrow: 2.315vw;    /* = the old vw(40)  */
+      --ring: 0.231vw;     /* = the old vw(4)   */
+    }
+  }
   * { box-sizing: border-box; }
   html, body, #root { height: 100%; margin: 0; }
   body {
@@ -16,13 +30,43 @@
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
   }
-  button { font-family: inherit; }
+  button {
+    font-family: inherit;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  /* Touch feedback (hover doesn't fire on touch devices) */
+  .tappable { transition: transform 120ms ease, opacity 120ms ease; }
+  .tappable:active { transform: scale(0.92); opacity: 0.9; }
+  @media (prefers-reduced-motion: reduce) { .tappable { transition: none; } }
+  /* Momentum + snap horizontal scroller with hidden scrollbar */
+  .hscroll {
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .hscroll::-webkit-scrollbar { display: none; }
+  .snap { scroll-snap-align: center; }
 </style>
 
 <div id="root"></div>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef } = React;
+
+function useMediaQuery(query) {
+  const [match, setMatch] = useState(() =>
+    typeof matchMedia === "function" ? matchMedia(query).matches : false);
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const mq = matchMedia(query);
+    const on = () => setMatch(mq.matches);
+    on();
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => (mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on));
+  }, [query]);
+  return match;
+}
 
 /* The Figma frame (node 671:2181) is a fixed 1728px-wide canvas.
    Everything is sized/positioned in vw relative to that canvas, so the
@@ -351,11 +395,13 @@ function CharacterShape4404({ bodyColor = C.body, eyelidColor = C.eyelid, style 
 /* =========================================================
    <SceneBackground /> — pale-blue field + curved white ground.
    ========================================================= */
-function SceneBackground() {
+function SceneBackground({ mobile = false }) {
+  const groundStyle = mobile
+    ? { position: "absolute", left: "-20%", width: "140%", bottom: 0, height: "34%" }
+    : { position: "absolute", left: vw(-415), width: vw(2379.66), top: vw(783), height: vw(682.5) };
   return (
     <div className="absolute inset-0" style={{ background: C.bg }}>
-      <svg viewBox="0 0 2379.66 682.5" preserveAspectRatio="none" aria-hidden="true"
-           style={{ position: "absolute", left: vw(-415), width: vw(2379.66), top: vw(783), height: vw(682.5) }}>
+      <svg viewBox="0 0 2379.66 682.5" preserveAspectRatio="none" aria-hidden="true" style={groundStyle}>
         <path d={GROUND_D} fill={C.ground} />
       </svg>
     </div>
@@ -398,9 +444,9 @@ function SidebarNav({ activeTab = "Shape", items = ["Shape", "Body", "Face", "St
 function ArrowButton({ dir = "left", onClick }) {
   return (
     <button onClick={onClick} aria-label={dir === "left" ? "Previous" : "Next"}
-      className="shrink-0 bg-white flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-      style={{ width: vw(40), height: vw(40), borderRadius: vw(20),
-               boxShadow: `0 ${vw(2)} ${vw(8)} 0 ${C.arrowShadow}`, cursor: "pointer" }}>
+      className="tappable shrink-0 bg-white flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      style={{ width: "var(--arrow)", height: "var(--arrow)", borderRadius: "9999px",
+               boxShadow: `0 2px 8px 0 ${C.arrowShadow}`, cursor: "pointer" }}>
       <svg width="60%" height="60%" viewBox="0 0 24 24" fill="none" aria-hidden="true"
            style={{ transform: dir === "right" ? "rotate(180deg)" : "none" }}>
         <path d="M15 6C15 6 9.00001 10.4189 9 12C8.99999 13.5812 15 18 15 18"
@@ -413,12 +459,12 @@ function ArrowButton({ dir = "left", onClick }) {
 /* ---------- Single swatch (140px circle with the shared Eye pair) ---------- */
 function Swatch({ circleColor, eyelidColor, onSelect, selected }) {
   return (
-    <button onClick={onSelect}
-      className="shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+    <button onClick={onSelect} aria-pressed={selected}
+      className="tappable shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
       style={{
-        width: vw(140), height: vw(140), borderRadius: "9999px", padding: 0, border: "none",
+        width: "var(--swatch)", height: "var(--swatch)", borderRadius: "9999px", padding: 0, border: "none",
         background: "transparent", cursor: "pointer",
-        boxShadow: selected ? `0 0 0 ${vw(4)} ${C.navActive}` : "none",
+        boxShadow: selected ? `0 0 0 var(--ring) ${C.navActive}` : "none",
       }}>
       <svg viewBox="0 0 140 140" className="w-full h-full block" aria-hidden="true">
         <circle cx="70" cy="70" r="70" fill={circleColor} />
@@ -444,12 +490,12 @@ function BodyGlyph({ option, color }) {
 /* ---------- Single body-option swatch (light circle w/ mini silhouette) ---------- */
 function BodySwatch({ option, color, onSelect, selected }) {
   return (
-    <button onClick={onSelect}
-      className="shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+    <button onClick={onSelect} aria-pressed={selected}
+      className="tappable shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
       style={{
-        width: vw(140), height: vw(140), borderRadius: "9999px", padding: 0, border: "none",
+        width: "var(--swatch)", height: "var(--swatch)", borderRadius: "9999px", padding: 0, border: "none",
         background: "transparent", cursor: "pointer",
-        boxShadow: selected ? `0 0 0 ${vw(4)} ${C.navActive}` : "none",
+        boxShadow: selected ? `0 0 0 var(--ring) ${C.navActive}` : "none",
       }}>
       <svg viewBox="0 0 140 140" className="w-full h-full block" aria-hidden="true">
         <circle cx="70" cy="70" r="70" fill={C.eyeWhite} />
@@ -483,6 +529,73 @@ function SwatchCarousel({ items, selectedIndex, onSelect, onPrev, onNext, render
         {right.map((it, j) => { const i = half + j; return renderItem(it, i, selectedIndex === i, () => onSelect(i)); })}
         <ArrowButton dir="right" onClick={onNext} />
       </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   <MobileTabBar /> — horizontal white pill of tabs (active = dark pill),
+   mirroring the desktop SidebarNav treatment. Scrolls if it can't fit.
+   ========================================================= */
+function MobileTabBar({ activeTab, items, onSelect }) {
+  return (
+    <nav style={{ position: "relative", zIndex: 30,
+                  padding: "calc(env(safe-area-inset-top) + 0.75rem) 0.75rem 0.25rem" }}>
+      <div className="hscroll" style={{
+        display: "flex", gap: "0.25rem", alignItems: "center",
+        background: "#fff", padding: "0.375rem", borderRadius: "9999px",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.08)", maxWidth: "26rem", margin: "0 auto",
+        overflowX: "auto",
+      }}>
+        {items.map((label) => {
+          const active = label === activeTab;
+          return (
+            <button key={label} onClick={() => onSelect(label)} aria-pressed={active}
+              className="tappable focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+              style={{
+                flex: "1 1 0", minWidth: "4.25rem", minHeight: "2.5rem",
+                padding: "0.5rem 0.75rem", borderRadius: "9999px", border: "none",
+                background: active ? C.navActive : "transparent",
+                color: active ? C.navActiveText : C.navText,
+                fontWeight: 500, fontSize: "0.95rem", whiteSpace: "nowrap", cursor: "pointer",
+                boxShadow: active ? "0 2px 3px rgba(0,0,0,0.25)" : "none",
+              }}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+/* =========================================================
+   <MobileCarousel /> — single swipeable scroll-snap row (tap to select),
+   with the arrow buttons flanking it (step-cycle + auto-scroll into view).
+   ========================================================= */
+function MobileCarousel({ items, selectedIndex, onSelect, onPrev, onNext, renderItem }) {
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const el = scrollRef.current && scrollRef.current.querySelector(`[data-idx="${selectedIndex}"]`);
+    if (!el) return;
+    const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", inline: "center", block: "nearest" });
+  }, [selectedIndex, items]);
+  return (
+    <div style={{ position: "relative", zIndex: 20, display: "flex", alignItems: "center",
+                  gap: "0.5rem", padding: "0.5rem 0.5rem calc(env(safe-area-inset-bottom) + 0.9rem)" }}>
+      <ArrowButton dir="left" onClick={onPrev} />
+      <div ref={scrollRef} className="hscroll" style={{
+        flex: 1, display: "flex", gap: "0.85rem", overflowX: "auto",
+        padding: "0.35rem 0.5rem", alignItems: "center",
+      }}>
+        {items.map((it, i) => (
+          <div key={i} data-idx={i} className="snap" style={{ flex: "0 0 auto" }}>
+            {renderItem(it, i, selectedIndex === i, () => onSelect(i))}
+          </div>
+        ))}
+      </div>
+      <ArrowButton dir="right" onClick={onNext} />
     </div>
   );
 }
@@ -532,21 +645,39 @@ function App() {
     : (sw, i, sel, onSel) => <Swatch key={i} {...sw} selected={sel} onSelect={onSel} />;
 
   const showCarousel = activeTab === "Shape" || activeTab === "Body";
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const tabs = ["Shape", "Body", "Face", "Style"];
 
   return (
-    <div className="relative w-full h-full overflow-hidden">
-      <SceneBackground />
-      <SidebarNav activeTab={activeTab} onSelect={setActiveTab} />
+    <div className="relative w-full overflow-hidden" style={{ height: "100dvh", minHeight: "100%" }}>
+      <SceneBackground mobile={!isDesktop} />
 
-      <div className="absolute z-10 left-1/2"
-           style={{ top: vw(96), transform: "translateX(-50%)", height: vw(925) }}>
-        <CharacterMascot bodyColor={color.circleColor} eyelidColor={color.eyelidColor} bodyOption={bodyOpt}
-                         style={{ height: "100%", width: "auto", display: "block" }} />
-      </div>
-
-      {showCarousel && (
-        <SwatchCarousel items={items} selectedIndex={index}
-                        onSelect={selectAt} onPrev={prev} onNext={next} renderItem={renderItem} />
+      {isDesktop ? (
+        <React.Fragment>
+          <SidebarNav activeTab={activeTab} onSelect={setActiveTab} />
+          <div className="absolute z-10 left-1/2"
+               style={{ top: vw(96), transform: "translateX(-50%)", height: vw(925) }}>
+            <CharacterMascot bodyColor={color.circleColor} eyelidColor={color.eyelidColor} bodyOption={bodyOpt}
+                             style={{ height: "100%", width: "auto", display: "block" }} />
+          </div>
+          {showCarousel && (
+            <SwatchCarousel items={items} selectedIndex={index}
+                            onSelect={selectAt} onPrev={prev} onNext={next} renderItem={renderItem} />
+          )}
+        </React.Fragment>
+      ) : (
+        <div className="absolute inset-0 flex flex-col">
+          <MobileTabBar activeTab={activeTab} items={tabs} onSelect={setActiveTab} />
+          <div className="flex-1 flex items-center justify-center"
+               style={{ minHeight: 0, padding: "0.5rem 1rem" }}>
+            <CharacterMascot bodyColor={color.circleColor} eyelidColor={color.eyelidColor} bodyOption={bodyOpt}
+                             style={{ width: "100%", height: "100%", display: "block" }} />
+          </div>
+          {showCarousel && (
+            <MobileCarousel items={items} selectedIndex={index}
+                            onSelect={selectAt} onPrev={prev} onNext={next} renderItem={renderItem} />
+          )}
+        </div>
       )}
     </div>
   );
