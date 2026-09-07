@@ -47,6 +47,12 @@
   }
   .hscroll::-webkit-scrollbar { display: none; }
   .snap { scroll-snap-align: center; }
+  /* Face-option crossfade (eyes swap = shape change, so no color spring) */
+  @keyframes faceIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes faceOut { from { opacity: 1; } to { opacity: 0; } }
+  .face-in { animation: faceIn 260ms ease both; }
+  .face-out { animation: faceOut 260ms ease both; }
+  @media (prefers-reduced-motion: reduce) { .face-in, .face-out { animation: none; } }
 </style>
 
 <div id="root"></div>
@@ -169,9 +175,10 @@ function useSpringColor(target, cfg = SPRING) {
    Ratios lifted from Figma so it is exact at any radius.
    ========================================================= */
 let __eyeUid = 0;
-function Eye({ cx, cy, r, eyelidColor }) {
+function Eye({ cx, cy, r, eyelidColor, open = false }) {
   const uid = React.useMemo(() => `eye${__eyeUid++}`, []);
-  const lidH = r * 1.0176;
+  // Eyelid height from Figma: sleepy/half = 60.25/118.42 of the eye; open = 12/118.42.
+  const lidH = (open ? 0.2026 : 1.0176) * r;
   const pr = r * 0.342;
   const hlR = r * 0.1053;
   const pcy = cy + r * 0.08;
@@ -188,10 +195,44 @@ function Eye({ cx, cy, r, eyelidColor }) {
   );
 }
 
+/* Face option = eye configuration on the character (from Figma node 704-7505):
+   `eyes` = "two" (at ±55.8) or "one" (centered ~0.28); `open` = thin vs half lid. */
+function EyeSet({ face, eyelidColor, r = 27.32, cy = 199.87 }) {
+  const cxs = face.eyes === "two" ? [-55.7985, 56.3595] : [0.2805];
+  return <g>{cxs.map((cx, i) => (
+    <Eye key={i} cx={cx} cy={cy} r={r} eyelidColor={eyelidColor} open={face.open} />
+  ))}</g>;
+}
+
+/* Crossfades the eyes when the Face option changes (a shape/count swap, so a
+   color spring doesn't apply — see notes). Honors reduced motion. */
+function Eyes({ face, eyelidColor }) {
+  const [cur, setCur] = useState(face);
+  const [prev, setPrev] = useState(null);
+  const [k, setK] = useState(0);
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) { setCur(face); setPrev(null); return; }
+    setPrev(cur);
+    setCur(face);
+    setK((x) => x + 1);
+    const t = setTimeout(() => setPrev(null), 260);
+    return () => clearTimeout(t);
+  }, [face]);
+  return (
+    <g>
+      {prev && <g className="face-out" key={"out" + k}><EyeSet face={prev} eyelidColor={eyelidColor} /></g>}
+      <g className="face-in" key={"in" + k}><EyeSet face={cur} eyelidColor={eyelidColor} /></g>
+    </g>
+  );
+}
+
 /* =========================================================
    <CharacterMascot /> — full creature as one SVG (viewBox 420.534 x 925).
    ========================================================= */
-function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, bodyOption = BODY_OPTIONS[0], style }) {
+function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, bodyOption = BODY_OPTIONS[0], faceOption = FACE_OPTIONS[0], style }) {
   // Spring-animate the body color toward the target `bodyColor` (eyelids stay instant).
   const body = useSpringColor(bodyColor);
   // Body option = a proportion transform anchored at the feet (0, 1094) so the
@@ -238,8 +279,7 @@ function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, bodyOptio
       ))}
 
       {/* face — eyes (same style/component as before) */}
-      <Eye cx={-55.7985} cy={199.87} r={27.32} eyelidColor={eyelidColor} />
-      <Eye cx={56.3595} cy={199.87} r={27.32} eyelidColor={eyelidColor} />
+      <Eyes face={faceOption} eyelidColor={eyelidColor} />
 
       {/* face — mouth (unchanged) */}
       <g transform="translate(-95.887, 219.524)">
@@ -508,6 +548,28 @@ function BodySwatch({ option, color, onSelect, selected }) {
   );
 }
 
+/* ---------- Single face-option swatch (light-blue circle w/ mini eyes) ----------
+   Preview background #B5CBE9 and eyelid #66686C are from the Figma face frames. */
+function FaceSwatch({ option, onSelect, selected }) {
+  const cxs = option.eyes === "two" ? [34.86, 104.14] : [70];
+  return (
+    <button onClick={onSelect} aria-pressed={selected}
+      className="tappable shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      style={{
+        width: "var(--swatch)", height: "var(--swatch)", borderRadius: "9999px", padding: 0, border: "none",
+        background: "transparent", cursor: "pointer",
+        boxShadow: selected ? `0 0 0 var(--ring) ${C.navActive}` : "none",
+      }}>
+      <svg viewBox="0 0 140 140" className="w-full h-full block" aria-hidden="true">
+        <circle cx="70" cy="70" r="70" fill="#B5CBE9" />
+        {cxs.map((cx, i) => (
+          <Eye key={i} cx={cx} cy={66} r={20} eyelidColor="#66686C" open={option.open} />
+        ))}
+      </svg>
+    </button>
+  );
+}
+
 /* =========================================================
    <SwatchCarousel /> — arrows at row ends, options split around the character.
    Generalized: `renderItem(item, index, selected, onSelect)` lets the same
@@ -620,31 +682,44 @@ const BODY_OPTIONS = [
   { sx: 0.80, sy: 0.92 },
 ];
 
+// Face options (from Figma node 704-7505), in the frame's swatch-row order.
+const FACE_OPTIONS = [
+  { eyes: "two", open: false }, // two eyes, sleepy / half-lidded (default)
+  { eyes: "two", open: true },  // two eyes, open
+  { eyes: "one", open: true },  // one centered eye, open
+  { eyes: "one", open: false }, // one centered eye, sleepy
+];
+
 function App() {
   const [activeTab, setActiveTab] = useState("Shape");
   // One selectedIndex per tab, so switching tabs preserves each selection.
   const [colorIndex, setColorIndex] = useState(0);
   const [bodyIndex, setBodyIndex] = useState(0);
+  const [faceIndex, setFaceIndex] = useState(0);
 
   const color = SWATCHES[colorIndex];
   const bodyOpt = BODY_OPTIONS[bodyIndex];
+  const faceOpt = FACE_OPTIONS[faceIndex];
 
-  // The carousel shows body options on the "Body" tab, color options otherwise.
+  // The carousel shows the active tab's options; each tab keeps its own index.
   const bodyMode = activeTab === "Body";
-  const items = bodyMode ? BODY_OPTIONS : SWATCHES;
-  const index = bodyMode ? bodyIndex : colorIndex;
-  const setIndex = bodyMode ? setBodyIndex : setColorIndex;
+  const faceMode = activeTab === "Face";
+  const items = faceMode ? FACE_OPTIONS : bodyMode ? BODY_OPTIONS : SWATCHES;
+  const index = faceMode ? faceIndex : bodyMode ? bodyIndex : colorIndex;
+  const setIndex = faceMode ? setFaceIndex : bodyMode ? setBodyIndex : setColorIndex;
   const len = items.length;
   const selectAt = (i) => setIndex(((i % len) + len) % len);
   const prev = () => setIndex((i) => (i - 1 + len) % len);
   const next = () => setIndex((i) => (i + 1) % len);
 
-  // Same interaction/state pattern for both modes; only the item renderer differs.
-  const renderItem = bodyMode
+  // Same interaction/state pattern for every mode; only the item renderer differs.
+  const renderItem = faceMode
+    ? (opt, i, sel, onSel) => <FaceSwatch key={i} option={opt} selected={sel} onSelect={onSel} />
+    : bodyMode
     ? (opt, i, sel, onSel) => <BodySwatch key={i} option={opt} color={color.circleColor} selected={sel} onSelect={onSel} />
     : (sw, i, sel, onSel) => <Swatch key={i} {...sw} selected={sel} onSelect={onSel} />;
 
-  const showCarousel = activeTab === "Shape" || activeTab === "Body";
+  const showCarousel = activeTab === "Shape" || activeTab === "Body" || activeTab === "Face";
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const tabs = ["Shape", "Body", "Face", "Style"];
 
@@ -657,7 +732,7 @@ function App() {
           <SidebarNav activeTab={activeTab} onSelect={setActiveTab} />
           <div className="absolute z-10 left-1/2"
                style={{ top: vw(96), transform: "translateX(-50%)", height: vw(925) }}>
-            <CharacterMascot bodyColor={color.circleColor} eyelidColor={color.eyelidColor} bodyOption={bodyOpt}
+            <CharacterMascot bodyColor={color.circleColor} eyelidColor={color.eyelidColor} bodyOption={bodyOpt} faceOption={faceOpt}
                              style={{ height: "100%", width: "auto", display: "block" }} />
           </div>
           {showCarousel && (
@@ -670,7 +745,7 @@ function App() {
           <MobileTabBar activeTab={activeTab} items={tabs} onSelect={setActiveTab} />
           <div className="flex-1 flex items-center justify-center"
                style={{ minHeight: 0, padding: "0.5rem 1rem" }}>
-            <CharacterMascot bodyColor={color.circleColor} eyelidColor={color.eyelidColor} bodyOption={bodyOpt}
+            <CharacterMascot bodyColor={color.circleColor} eyelidColor={color.eyelidColor} bodyOption={bodyOpt} faceOption={faceOpt}
                              style={{ width: "100%", height: "100%", display: "block" }} />
           </div>
           {showCarousel && (
