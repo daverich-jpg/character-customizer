@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>Character Customizer</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -35,10 +36,19 @@
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
-  /* Touch feedback (hover doesn't fire on touch devices) */
-  .tappable { transition: transform 120ms ease, opacity 120ms ease; }
-  .tappable:active { transform: scale(0.92); opacity: 0.9; }
-  @media (prefers-reduced-motion: reduce) { .tappable { transition: none; } }
+  /* Touch feedback (hover doesn't fire on touch devices). Driven by the shared
+     animation config: data-press on <html> + --press-scale / --press-dur. */
+  .tappable { transition: transform var(--press-dur, 130ms) ease, box-shadow var(--press-dur, 130ms) ease, opacity var(--press-dur, 130ms) ease; }
+  [data-press="scale"] .tappable:active,
+  [data-press="ripple"] .tappable:active { transform: scale(var(--press-scale, 0.94)); }
+  [data-press="scale-shadow"] .tappable:active { transform: scale(var(--press-scale, 0.94)); box-shadow: 0 8px 20px rgba(0,0,0,0.22); }
+  [data-press="none"] .tappable:active { transform: none; }
+  [data-press="ripple"] .tappable { position: relative; overflow: hidden; }
+  .press-ripple { position: absolute; border-radius: 9999px; background: rgba(0,0,0,0.16);
+    pointer-events: none; transform: translate(-50%, -50%) scale(0);
+    animation: pressRipple var(--press-dur, 400ms) ease-out forwards; }
+  @keyframes pressRipple { to { transform: translate(-50%, -50%) scale(1); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .tappable { transition: none; } .press-ripple { display: none; } }
   /* Momentum + snap horizontal scroller with hidden scrollbar */
   .hscroll {
     -webkit-overflow-scrolling: touch;
@@ -116,9 +126,66 @@ const GROUND_D = "M1179 0C875 0 369.667 85.3333 155 128L0 473.5L675 682.5L2373.5
    interpolated in HSL so the in-between blend stays vivid rather than muddy.
    Progress is clamped to [0,1] so a hue can't visibly overshoot the target.
    ========================================================= */
-// Tuned from the spec's {120,18,1} start to land the visual arrival near 240ms
-// with effectively no overshoot (damping ratio ~0.87).
-const SPRING = { stiffness: 260, damping: 28, mass: 1 };
+/* =========================================================
+   Shared animation config (read by every interaction). The DevPanel
+   (?debug=true or Shift+D) mutates this live; when hidden the app just
+   uses these defaults — my proposed "delightful" starting preset.
+   ========================================================= */
+const EASINGS = {
+  Linear: "cubic-bezier(0,0,1,1)",
+  Ease: "cubic-bezier(0.25,0.1,0.25,1)",
+  "Ease-in-out": "cubic-bezier(0.42,0,0.58,1)",
+  "Ease-out": "cubic-bezier(0,0,0.58,1)",
+  "Back-out": "cubic-bezier(0.34,1.56,0.64,1)",
+};
+const DEFAULT_ANIM = {
+  speed: 1,
+  style: "spring",                                   // "spring" | "duration"
+  spring: { stiffness: 240, damping: 21, mass: 1 },   // ζ≈0.68 → gentle overshoot
+  duration: { ms: 300, easing: "cubic-bezier(0.34,1.56,0.64,1)" }, // Back-out
+  press: { effect: "scale", scale: 0.94, duration: 130 }, // scale | scale-shadow | ripple | none
+  stagger: { ms: 60, order: "body-first" },           // body-first | face-first
+};
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+// Cubic-bezier(x1,y1,x2,y2) → easing function t∈[0,1]→[0,1] (Newton + bisection).
+function makeBezier(str) {
+  const m = /cubic-bezier\(([^)]+)\)/.exec(str);
+  if (!m) return (t) => t;
+  const [x1, y1, x2, y2] = m[1].split(",").map(Number);
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+  const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const fx = (t) => ((ax * t + bx) * t + cx) * t;
+  const fy = (t) => ((ay * t + by) * t + cy) * t;
+  const dfx = (t) => (3 * ax * t + 2 * bx) * t + cx;
+  return (x) => {
+    let t = x;
+    for (let i = 0; i < 5; i++) { const e = fx(t) - x; const d = dfx(t); if (Math.abs(e) < 1e-4 || d === 0) break; t -= e / d; }
+    let lo = 0, hi = 1;
+    if (t < 0 || t > 1) { t = x; for (let i = 0; i < 20; i++) { const e = fx(t) - x; if (Math.abs(e) < 1e-4) break; e > 0 ? (hi = t) : (lo = t); t = (lo + hi) / 2; } }
+    return fy(t);
+  };
+}
+
+// Approx spring "visual duration" (ms) and a spring-like CSS easing, so the
+// CSS-driven interactions (body swap, face crossfade) can mimic the spring.
+function springTiming(sp) {
+  const wn = Math.sqrt(sp.stiffness / sp.mass);
+  const zeta = sp.damping / (2 * Math.sqrt(sp.stiffness * sp.mass));
+  const ms = Math.max(120, Math.min(1400, (4 / (Math.max(0.2, zeta) * wn)) * 1000 * 0.6));
+  const easing = zeta < 0.92 ? "cubic-bezier(0.34,1.4,0.5,1)" : "cubic-bezier(0.4,0,0.2,1)";
+  return { ms, easing };
+}
+// Resolve the config into concrete { ms, easing } for CSS interactions.
+function resolveTiming(cfg) {
+  const speed = cfg.speed || 1;
+  if (cfg.style === "duration") return { ms: cfg.duration.ms / speed, easing: cfg.duration.easing };
+  const t = springTiming(cfg.spring);
+  return { ms: t.ms / speed, easing: t.easing };
+}
+
+const AnimContext = React.createContext({ cfg: DEFAULT_ANIM, setCfg: () => {}, cfgRef: { current: DEFAULT_ANIM } });
+const useAnim = () => React.useContext(AnimContext);
 
 function hexToHsl(hex) {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -138,35 +205,49 @@ function hexToHsl(hex) {
 const lerpHue = (a, b, t) => { const d = ((b - a + 540) % 360) - 180; return (a + d * t + 360) % 360; };
 const hslStr = (h, s, l) => `hsl(${h.toFixed(1)}, ${s.toFixed(1)}%, ${l.toFixed(1)}%)`;
 
-function useSpringColor(target, cfg = SPRING) {
+// Body color animation — reads the shared config at the moment `target` changes
+// (so live panel edits apply to the next change). Spring or duration tween, HSL.
+function useSpringColor(target) {
+  const { cfgRef } = useAnim();
   const [color, setColor] = useState(target);
-  const ref = useRef({ cur: hexToHsl(target), from: hexToHsl(target), to: hexToHsl(target), p: 1, v: 0, raf: 0, last: 0 });
+  const ref = useRef({ cur: hexToHsl(target), raf: 0 });
   useEffect(() => {
     const s = ref.current;
-    const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-    s.from = s.cur;                // begin from the currently displayed color
-    s.to = hexToHsl(target);
-    s.p = 0; s.v = 0; s.last = 0;
-    if (reduce) { s.cur = s.to; s.p = 1; setColor(hslStr(s.to.h, s.to.s, s.to.l)); return; }
-    cancelAnimationFrame(s.raf);
-    const tick = (now) => {
-      if (!s.last) s.last = now;
-      let dt = (now - s.last) / 1000; s.last = now;
-      dt = Math.min(dt, 0.064);
-      const steps = Math.max(1, Math.ceil(dt / (1 / 120))), h = dt / steps;
-      for (let i = 0; i < steps; i++) {
-        const a = (-cfg.stiffness * (s.p - 1) - cfg.damping * s.v) / cfg.mass;
-        s.v += a * h; s.p += s.v * h;
-      }
-      const p = Math.max(0, Math.min(1, s.p)); // clamp → no hue overshoot
-      s.cur = { h: lerpHue(s.from.h, s.to.h, p), s: s.from.s + (s.to.s - s.from.s) * p, l: s.from.l + (s.to.l - s.from.l) * p };
-      setColor(hslStr(s.cur.h, s.cur.s, s.cur.l));
-      if (Math.abs(1 - s.p) < 0.001 && Math.abs(s.v) < 0.001) { s.p = 1; s.v = 0; s.cur = s.to; setColor(hslStr(s.to.h, s.to.s, s.to.l)); return; }
-      s.raf = requestAnimationFrame(tick);
+    const cfg = cfgRef.current;
+    const from = s.cur, to = hexToHsl(target);
+    const paint = (p) => {
+      const c = { h: lerpHue(from.h, to.h, p), s: from.s + (to.s - from.s) * p, l: from.l + (to.l - from.l) * p };
+      s.cur = c; setColor(hslStr(c.h, c.s, c.l));
     };
-    s.raf = requestAnimationFrame(tick);
+    const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) { paint(1); return; }
+    cancelAnimationFrame(s.raf);
+    const speed = cfg.speed || 1;
+    if (cfg.style === "spring") {
+      let p = 0, v = 0, last = 0; const sp = cfg.spring;
+      const tick = (now) => {
+        if (!last) last = now;
+        let dt = Math.min((now - last) / 1000, 0.064) * speed; last = now;
+        const steps = Math.max(1, Math.ceil(dt / (1 / 120))), h = dt / steps;
+        for (let i = 0; i < steps; i++) { const a = (-sp.stiffness * (p - 1) - sp.damping * v) / sp.mass; v += a * h; p += v * h; }
+        paint(Math.max(0, Math.min(1, p)));            // clamp → no muddy hue overshoot
+        if (Math.abs(1 - p) < 0.001 && Math.abs(v) < 0.001) { paint(1); return; }
+        s.raf = requestAnimationFrame(tick);
+      };
+      s.raf = requestAnimationFrame(tick);
+    } else {
+      const ms = Math.max(1, cfg.duration.ms / speed), ease = makeBezier(cfg.duration.easing);
+      let start = 0;
+      const tick = (now) => {
+        if (!start) start = now;
+        const t = Math.min(1, (now - start) / ms);
+        paint(Math.max(0, Math.min(1, ease(t))));
+        if (t < 1) s.raf = requestAnimationFrame(tick); else paint(1);
+      };
+      s.raf = requestAnimationFrame(tick);
+    }
     return () => cancelAnimationFrame(s.raf);
-  }, [target, cfg.stiffness, cfg.damping, cfg.mass]);
+  }, [target]);
   return color;
 }
 
@@ -207,6 +288,9 @@ function EyeSet({ face, eyelidColor, r = 27.32, cy = 199.87 }) {
 /* Crossfades the eyes when the Face option changes (a shape/count swap, so a
    color spring doesn't apply — see notes). Honors reduced motion. */
 function Eyes({ face, eyelidColor }) {
+  const { cfg } = useAnim();
+  const timing = resolveTiming(cfg);
+  const delay = cfg.stagger.order === "face-first" ? 0 : cfg.stagger.ms; // face waits if body-first
   const [cur, setCur] = useState(face);
   const [prev, setPrev] = useState(null);
   const [k, setK] = useState(0);
@@ -218,13 +302,18 @@ function Eyes({ face, eyelidColor }) {
     setPrev(cur);
     setCur(face);
     setK((x) => x + 1);
-    const t = setTimeout(() => setPrev(null), 260);
+    const t = setTimeout(() => setPrev(null), timing.ms + delay + 60);
     return () => clearTimeout(t);
   }, [face]);
+  const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const anim = (name) => reduce ? {} : ({
+    animationName: name, animationDuration: `${timing.ms}ms`,
+    animationTimingFunction: timing.easing, animationDelay: `${delay}ms`, animationFillMode: "both",
+  });
   return (
     <g>
-      {prev && <g className="face-out" key={"out" + k}><EyeSet face={prev} eyelidColor={eyelidColor} /></g>}
-      <g className="face-in" key={"in" + k}><EyeSet face={cur} eyelidColor={eyelidColor} /></g>
+      {prev && <g style={anim("faceOut")} key={"out" + k}><EyeSet face={prev} eyelidColor={eyelidColor} /></g>}
+      <g style={anim("faceIn")} key={"in" + k}><EyeSet face={cur} eyelidColor={eyelidColor} /></g>
     </g>
   );
 }
@@ -235,10 +324,17 @@ function Eyes({ face, eyelidColor }) {
 function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, bodyOption = BODY_OPTIONS[0], faceOption = FACE_OPTIONS[0], style }) {
   // Spring-animate the body color toward the target `bodyColor` (eyelids stay instant).
   const body = useSpringColor(bodyColor);
+  const { cfg } = useAnim();
+  const timing = resolveTiming(cfg);
+  const bodyDelay = cfg.stagger.order === "body-first" ? 0 : cfg.stagger.ms; // body waits if face-first
   // Body option = a proportion transform anchored at the feet (0, 1094) so the
   // character stays planted on the ground. PLACEHOLDER scales until the real body
-  // shapes are exported from Figma (nodes 694-4887 / 698-7504).
+  // shapes are exported from Figma (nodes 694-4887 / 698-7504). The swap is
+  // config-driven (SVG transforms transition in modern browsers).
+  const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const bt = `translate(0 1094) scale(${bodyOption.sx} ${bodyOption.sy}) translate(0 -1094)`;
+  const btStyle = reduce ? undefined
+    : { transition: `transform ${timing.ms}ms ${timing.easing} ${bodyDelay}ms` };
   // feet, in the new character's coordinate space (right foot toe →, left toe ←)
   const feet = [
     { legX: 26.1, sockX: 26.1, shoeX: 26.1 },        // right
@@ -253,7 +349,7 @@ function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, bodyOptio
         </filter>
       </defs>
 
-      <g transform={bt}>
+      <g transform={bt} style={btStyle}>
       {/* head / ears */}
       <g transform="translate(-119.8755, 0)"><path d={HEAD_D} fill={body} /></g>
 
@@ -690,6 +786,195 @@ const FACE_OPTIONS = [
   { eyes: "one", open: false }, // one centered eye, sleepy
 ];
 
+/* =========================================================
+   DEV TOOLING — Animation Controls. Everything below is gated behind
+   ?debug=true (or Shift+D). Delete AnimProvider's press/ripple effects,
+   DevPanel, and the Root gate to remove; the app then just uses DEFAULT_ANIM.
+   ========================================================= */
+function AnimProvider({ children }) {
+  const [cfg, setCfg] = useState(DEFAULT_ANIM);
+  const cfgRef = useRef(cfg);
+  cfgRef.current = cfg;
+  // Apply press-effect settings to <html> so CSS picks them up live.
+  useEffect(() => {
+    const el = document.documentElement;
+    el.setAttribute("data-press", cfg.press.effect);
+    el.style.setProperty("--press-scale", String(cfg.press.scale));
+    el.style.setProperty("--press-dur", `${cfg.press.duration}ms`);
+  }, [cfg.press.effect, cfg.press.scale, cfg.press.duration]);
+  // Ripple press effect (only fires when effect === "ripple").
+  useEffect(() => {
+    const onDown = (e) => {
+      if (cfgRef.current.press.effect !== "ripple") return;
+      const btn = e.target.closest && e.target.closest(".tappable");
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+      const size = Math.max(rect.width, rect.height) * 2.2;
+      const span = document.createElement("span");
+      span.className = "press-ripple";
+      span.style.width = span.style.height = `${size}px`;
+      span.style.left = `${(e.clientX || rect.left + rect.width / 2) - rect.left}px`;
+      span.style.top = `${(e.clientY || rect.top + rect.height / 2) - rect.top}px`;
+      btn.appendChild(span);
+      setTimeout(() => span.remove(), (cfgRef.current.press.duration || 400) + 80);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, []);
+  return <AnimContext.Provider value={{ cfg, setCfg, cfgRef }}>{children}</AnimContext.Provider>;
+}
+
+const DP = {
+  row: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 11 },
+  head: { display: "flex", justifyContent: "space-between", alignItems: "baseline" },
+  lbl: { fontSize: 11, opacity: 0.72, letterSpacing: "0.02em" },
+  val: { fontSize: 11, fontFamily: "ui-monospace, Menlo, monospace", color: "#9ec6fd" },
+  sel: { width: "100%", background: "#23262d", color: "#fff", border: "1px solid #3a3f49", borderRadius: 6, padding: "5px 6px", fontSize: 12 },
+  num: { width: "100%", background: "#23262d", color: "#fff", border: "1px solid #3a3f49", borderRadius: 6, padding: "4px 5px", fontSize: 11, fontFamily: "monospace" },
+  btn: { flex: 1, padding: "8px 10px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" },
+  section: { fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", opacity: 0.5, margin: "14px 0 8px" },
+};
+function Row({ label, value, children }) {
+  return (
+    <div style={DP.row}>
+      <div style={DP.head}><span style={DP.lbl}>{label}</span>{value != null && <span style={DP.val}>{value}</span>}</div>
+      {children}
+    </div>
+  );
+}
+function Slider({ min, max, step, value, onChange, disabled }) {
+  return <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
+    onChange={(e) => onChange(parseFloat(e.target.value))}
+    style={{ width: "100%", accentColor: "#9ec6fd", opacity: disabled ? 0.4 : 1 }} />;
+}
+function Sel({ value, options, onChange }) {
+  return <select value={value} onChange={(e) => onChange(e.target.value)} style={DP.sel}>
+    {options.map((o) => <option key={o} value={o}>{o}</option>)}
+  </select>;
+}
+
+function DevPanel({ onClose }) {
+  const { cfg, setCfg } = useAnim();
+  const [collapsed, setCollapsed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showCode, setShowCode] = useState(false);
+  const up = (patch) => setCfg((c) => ({ ...c, ...patch }));
+  const upSpring = (p) => setCfg((c) => ({ ...c, spring: { ...c.spring, ...p } }));
+  const upDur = (p) => setCfg((c) => ({ ...c, duration: { ...c.duration, ...p } }));
+  const upPress = (p) => setCfg((c) => ({ ...c, press: { ...c.press, ...p } }));
+  const upStag = (p) => setCfg((c) => ({ ...c, stagger: { ...c.stagger, ...p } }));
+
+  const zeta = cfg.spring.damping / (2 * Math.sqrt(cfg.spring.stiffness * cfg.spring.mass));
+  const springMs = Math.round(springTiming(cfg.spring).ms / cfg.speed);
+  const easingName = Object.keys(EASINGS).find((k) => EASINGS[k] === cfg.duration.easing) || "Custom";
+  const bez = ((/cubic-bezier\(([^)]+)\)/.exec(cfg.duration.easing) || [])[1] || "0.34,1.56,0.64,1").split(",").map(Number);
+  const snippet = "const ANIM_CONFIG = " + JSON.stringify(cfg, null, 2) + ";";
+  const copy = () => {
+    try { navigator.clipboard && navigator.clipboard.writeText(snippet); } catch (e) {}
+    setShowCode(true); setCopied(true); setTimeout(() => setCopied(false), 1300);
+  };
+
+  return (
+    <div style={{
+      position: "fixed", right: 16, bottom: 16, zIndex: 9999, width: 296, maxWidth: "calc(100vw - 24px)",
+      maxHeight: "86vh", overflowY: "auto", background: "#15171c", color: "#f4f4f5",
+      borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.4)", border: "1px solid #2a2e37",
+      fontFamily: "'Manrope', system-ui, sans-serif",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "12px 14px", position: "sticky", top: 0, background: "#15171c", borderBottom: "1px solid #2a2e37" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 9999, background: "#9ec6fd", display: "inline-block" }} />
+          <strong style={{ fontSize: 13 }}>Animation Controls</strong>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => setCollapsed((v) => !v)} title="Collapse"
+            style={{ ...DP.btn, flex: "none", padding: "3px 9px", background: "#23262d", color: "#fff" }}>{collapsed ? "▸" : "▾"}</button>
+          <button onClick={onClose} title="Hide (Shift+D)"
+            style={{ ...DP.btn, flex: "none", padding: "3px 9px", background: "#23262d", color: "#fff" }}>✕</button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div style={{ padding: "12px 14px 16px" }}>
+          <Row label="Animation speed" value={`${cfg.speed.toFixed(2)}×`}>
+            <Slider min={0.25} max={3} step={0.05} value={cfg.speed} onChange={(v) => up({ speed: v })} />
+          </Row>
+
+          <div style={DP.section}>Model</div>
+          <Row label="Animation style">
+            <Sel value={cfg.style} options={["spring", "duration"]} onChange={(v) => up({ style: v })} />
+          </Row>
+          {cfg.style === "spring" ? (
+            <React.Fragment>
+              <Row label="Stiffness" value={cfg.spring.stiffness}>
+                <Slider min={20} max={600} step={5} value={cfg.spring.stiffness} onChange={(v) => upSpring({ stiffness: v })} />
+              </Row>
+              <Row label="Damping" value={cfg.spring.damping}>
+                <Slider min={2} max={60} step={1} value={cfg.spring.damping} onChange={(v) => upSpring({ damping: v })} />
+              </Row>
+              <Row label="Mass" value={cfg.spring.mass.toFixed(2)}>
+                <Slider min={0.2} max={4} step={0.1} value={cfg.spring.mass} onChange={(v) => upSpring({ mass: v })} />
+              </Row>
+              <div style={{ ...DP.val, opacity: 0.6, marginTop: -4 }}>
+                ζ={zeta.toFixed(2)} {zeta < 1 ? "(bouncy)" : "(no overshoot)"} · ~{springMs}ms
+              </div>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <Row label="Duration" value={`${cfg.duration.ms}ms`}>
+                <Slider min={60} max={1200} step={10} value={cfg.duration.ms} onChange={(v) => upDur({ ms: v })} />
+              </Row>
+              <Row label="Easing curve" value={easingName}>
+                <Sel value={easingName} options={[...Object.keys(EASINGS), "Custom"]}
+                  onChange={(v) => { if (v !== "Custom") upDur({ easing: EASINGS[v] }); else upDur({ easing: `cubic-bezier(${bez.join(",")})` }); }} />
+              </Row>
+              {easingName === "Custom" && (
+                <div style={{ display: "flex", gap: 4, marginBottom: 11 }}>
+                  {bez.map((n, i) => (
+                    <input key={i} type="number" step="0.01" value={n} style={DP.num}
+                      onChange={(e) => { const nb = bez.slice(); nb[i] = parseFloat(e.target.value) || 0; upDur({ easing: `cubic-bezier(${nb.join(",")})` }); }} />
+                  ))}
+                </div>
+              )}
+            </React.Fragment>
+          )}
+
+          <div style={DP.section}>Button press</div>
+          <Row label="Press effect">
+            <Sel value={cfg.press.effect} options={["scale", "scale-shadow", "ripple", "none"]} onChange={(v) => upPress({ effect: v })} />
+          </Row>
+          <Row label="Press scale" value={cfg.press.scale.toFixed(2)}>
+            <Slider min={0.85} max={1} step={0.01} value={cfg.press.scale} disabled={cfg.press.effect === "none"} onChange={(v) => upPress({ scale: v })} />
+          </Row>
+          <Row label="Press duration" value={`${cfg.press.duration}ms`}>
+            <Slider min={40} max={600} step={10} value={cfg.press.duration} onChange={(v) => upPress({ duration: v })} />
+          </Row>
+
+          <div style={DP.section}>Stagger</div>
+          <Row label="Body ↔ face delay" value={`${cfg.stagger.ms}ms`}>
+            <Slider min={0} max={400} step={10} value={cfg.stagger.ms} onChange={(v) => upStag({ ms: v })} />
+          </Row>
+          <Row label="Stagger order">
+            <Sel value={cfg.stagger.order} options={["body-first", "face-first"]} onChange={(v) => upStag({ order: v })} />
+          </Row>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button onClick={() => setCfg(clone(DEFAULT_ANIM))} style={{ ...DP.btn, background: "#23262d", color: "#fff" }}>Reset</button>
+            <button onClick={copy} style={{ ...DP.btn, background: "#9ec6fd", color: "#15171c" }}>{copied ? "Copied ✓" : "Copy config"}</button>
+          </div>
+          {showCode && (
+            <textarea readOnly value={snippet} onFocus={(e) => e.target.select()}
+              style={{ width: "100%", height: 150, marginTop: 10, background: "#0f1114", color: "#cbd5e1",
+                       border: "1px solid #2a2e37", borderRadius: 8, padding: 8, fontSize: 10.5,
+                       fontFamily: "ui-monospace, Menlo, monospace", resize: "vertical" }} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState("Shape");
   // One selectedIndex per tab, so switching tabs preserves each selection.
@@ -758,5 +1043,26 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+/* Gate: DevPanel shows only with ?debug=true or after pressing Shift+D.
+   When hidden the app just runs on DEFAULT_ANIM — no panel, no overhead. */
+function Root() {
+  const [debug, setDebug] = useState(() => {
+    try { return new URLSearchParams(location.search).has("debug"); } catch (e) { return false; }
+  });
+  useEffect(() => {
+    const h = (e) => {
+      if (e.shiftKey && (e.key === "D" || e.key === "d")) { e.preventDefault(); setDebug((d) => !d); }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+  return (
+    <AnimProvider>
+      <App />
+      {debug && <DevPanel onClose={() => setDebug(false)} />}
+    </AnimProvider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
