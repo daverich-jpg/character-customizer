@@ -147,9 +147,13 @@ function Eye({ cx, cy, r, eyelidColor }) {
 /* =========================================================
    <CharacterMascot /> — full creature as one SVG (viewBox 420.534 x 925).
    ========================================================= */
-function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, style }) {
+function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, bodyOption = BODY_OPTIONS[0], style }) {
   // Spring-animate the body color toward the target `bodyColor` (eyelids stay instant).
   const body = useSpringColor(bodyColor);
+  // Body option = a proportion transform anchored at the feet (0, 1094) so the
+  // character stays planted on the ground. PLACEHOLDER scales until the real body
+  // shapes are exported from Figma (nodes 694-4887 / 698-7504).
+  const bt = `translate(0 1094) scale(${bodyOption.sx} ${bodyOption.sy}) translate(0 -1094)`;
   // feet, in the new character's coordinate space (right foot toe →, left toe ←)
   const feet = [
     { legX: 26.1, sockX: 26.1, shoeX: 26.1 },        // right
@@ -164,6 +168,7 @@ function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, style }) 
         </filter>
       </defs>
 
+      <g transform={bt}>
       {/* head / ears */}
       <g transform="translate(-119.8755, 0)"><path d={HEAD_D} fill={body} /></g>
 
@@ -200,6 +205,7 @@ function CharacterMascot({ bodyColor = C.body, eyelidColor = C.eyelid, style }) 
       <rect x="5.7345" y="238.211" width="27.8" height="23.965" rx="2.876" fill={C.eyeWhite} />
       <g transform="translate(-95.887, 219.524)">
         <path d={MOUTH_D} fill="none" stroke={eyelidColor} strokeWidth="15.3378" />
+      </g>
       </g>
     </svg>
   );
@@ -284,26 +290,60 @@ function Swatch({ circleColor, eyelidColor, onSelect, selected }) {
   );
 }
 
+/* ---------- Body-option thumbnail: mini silhouette of the character body ---------- */
+function BodyGlyph({ option, color }) {
+  const t = `translate(0 1094) scale(${option.sx} ${option.sy}) translate(0 -1094)`;
+  return (
+    <g transform={t} fill={color}>
+      <g transform="translate(-119.8755, 0)"><path d={HEAD_D} /></g>
+      <g transform="translate(-353.8755, 394)"><path d={ARM_L_D} /><path d={ARM_R_D} /></g>
+      <g transform="translate(-167.523, 383.997)"><path d={TORSO_D} /></g>
+      <rect x="26.1" y="738.927" width="54.641" height="278.956" rx="19.172" />
+      <rect x="-89.87" y="738.927" width="54.641" height="278.956" rx="19.172" />
+    </g>
+  );
+}
+
+/* ---------- Single body-option swatch (light circle w/ mini silhouette) ---------- */
+function BodySwatch({ option, color, onSelect, selected }) {
+  return (
+    <button onClick={onSelect}
+      className="shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      style={{
+        width: vw(140), height: vw(140), borderRadius: "9999px", padding: 0, border: "none",
+        background: "transparent", cursor: "pointer",
+        boxShadow: selected ? `0 0 0 ${vw(4)} ${C.navActive}` : "none",
+      }}>
+      <svg viewBox="0 0 140 140" className="w-full h-full block" aria-hidden="true">
+        <circle cx="70" cy="70" r="70" fill={C.eyeWhite} />
+        <svg x="20" y="14" width="100" height="112" viewBox="-353.8755 0 706 1107.437"
+             preserveAspectRatio="xMidYMid meet">
+          <BodyGlyph option={option} color={color} />
+        </svg>
+      </svg>
+    </button>
+  );
+}
+
 /* =========================================================
-   <SwatchCarousel /> — arrows at row ends, 4 swatches split around character.
+   <SwatchCarousel /> — arrows at row ends, options split around the character.
+   Generalized: `renderItem(item, index, selected, onSelect)` lets the same
+   carousel drive either color swatches (Shape) or body options (Body).
    ========================================================= */
-function SwatchCarousel({ swatches, selectedIndex, onSelect, onPrev, onNext }) {
-  const left = swatches.slice(0, 2);
-  const right = swatches.slice(2, 4);
+function SwatchCarousel({ items, selectedIndex, onSelect, onPrev, onNext, renderItem }) {
+  const half = Math.ceil(items.length / 2);
+  const left = items.slice(0, half);
+  const right = items.slice(half);
   const gap = vw(40);
   return (
     <div className="absolute z-20 left-1/2 flex items-center justify-between"
          style={{ top: vw(559), transform: "translate(-50%, -50%)", width: vw(1308) }}>
       <div className="flex items-center" style={{ gap }}>
         <ArrowButton dir="left" onClick={onPrev} />
-        {left.map((s, i) => (
-          <Swatch key={i} {...s} selected={selectedIndex === i} onSelect={() => onSelect(i)} />
-        ))}
+        {left.map((it, i) => renderItem(it, i, selectedIndex === i, () => onSelect(i)))}
       </div>
       <div className="flex items-center" style={{ gap }}>
-        {right.map((s, i) => (
-          <Swatch key={i + 2} {...s} selected={selectedIndex === i + 2} onSelect={() => onSelect(i + 2)} />
-        ))}
+        {right.map((it, j) => { const i = half + j; return renderItem(it, i, selectedIndex === i, () => onSelect(i)); })}
         <ArrowButton dir="right" onClick={onNext} />
       </div>
     </div>
@@ -320,25 +360,57 @@ const SWATCHES = [
   { circleColor: "#e2be8a", eyelidColor: "#887253" }, // tan
 ];
 
+// PLACEHOLDER body options — proportion transforms (scale about the feet) so the
+// Body-tab interaction is fully functional now. Replace each entry with the real
+// exported body SVG from Figma nodes 694-4887 / 698-7504 once the MCP is reachable.
+const BODY_OPTIONS = [
+  { sx: 1.00, sy: 1.00 },
+  { sx: 0.85, sy: 1.00 },
+  { sx: 1.00, sy: 0.90 },
+  { sx: 0.80, sy: 0.92 },
+];
+
 function App() {
-  const [selected, setSelected] = useState(0);
-  const cur = SWATCHES[selected];
-  const prev = () => setSelected((i) => (i - 1 + SWATCHES.length) % SWATCHES.length);
-  const next = () => setSelected((i) => (i + 1) % SWATCHES.length);
+  const [activeTab, setActiveTab] = useState("Shape");
+  // One selectedIndex per tab, so switching tabs preserves each selection.
+  const [colorIndex, setColorIndex] = useState(0);
+  const [bodyIndex, setBodyIndex] = useState(0);
+
+  const color = SWATCHES[colorIndex];
+  const bodyOpt = BODY_OPTIONS[bodyIndex];
+
+  // The carousel shows body options on the "Body" tab, color options otherwise.
+  const bodyMode = activeTab === "Body";
+  const items = bodyMode ? BODY_OPTIONS : SWATCHES;
+  const index = bodyMode ? bodyIndex : colorIndex;
+  const setIndex = bodyMode ? setBodyIndex : setColorIndex;
+  const len = items.length;
+  const selectAt = (i) => setIndex(((i % len) + len) % len);
+  const prev = () => setIndex((i) => (i - 1 + len) % len);
+  const next = () => setIndex((i) => (i + 1) % len);
+
+  // Same interaction/state pattern for both modes; only the item renderer differs.
+  const renderItem = bodyMode
+    ? (opt, i, sel, onSel) => <BodySwatch key={i} option={opt} color={color.circleColor} selected={sel} onSelect={onSel} />
+    : (sw, i, sel, onSel) => <Swatch key={i} {...sw} selected={sel} onSelect={onSel} />;
+
+  const showCarousel = activeTab === "Shape" || activeTab === "Body";
 
   return (
     <div className="relative w-full h-full overflow-hidden">
       <SceneBackground />
-      <SidebarNav activeTab="Shape" onSelect={() => {}} />
+      <SidebarNav activeTab={activeTab} onSelect={setActiveTab} />
 
       <div className="absolute z-10 left-1/2"
            style={{ top: vw(96), transform: "translateX(-50%)", height: vw(925) }}>
-        <CharacterMascot bodyColor={cur.circleColor} eyelidColor={cur.eyelidColor}
+        <CharacterMascot bodyColor={color.circleColor} eyelidColor={color.eyelidColor} bodyOption={bodyOpt}
                          style={{ height: "100%", width: "auto", display: "block" }} />
       </div>
 
-      <SwatchCarousel swatches={SWATCHES} selectedIndex={selected}
-                      onSelect={setSelected} onPrev={prev} onNext={next} />
+      {showCarousel && (
+        <SwatchCarousel items={items} selectedIndex={index}
+                        onSelect={selectAt} onPrev={prev} onNext={next} renderItem={renderItem} />
+      )}
     </div>
   );
 }
